@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CTI Dashboard</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+</head>
+<body>
+<div class="wrapper">
+
+<!-- ── Sidebar ─────────────────────────────────────────────── -->
+<aside class="sidebar">
+  <div class="logo">
+    <div class="logo-title">⬡ CTI Dashboard</div>
+    <div class="logo-sub">Cyber Threat Intelligence</div>
+  </div>
+  <nav>
+    <div class="nav-section">Analysis</div>
+    <div class="nav-item active" data-page="dashboard">
+      <span class="icon">◈</span> Dashboard
+    </div>
+    <div class="nav-item" data-page="lookup">
+      <span class="icon">⌕</span> Indicator Lookup
+    </div>
+    <div class="nav-item" data-page="alerts">
+      <span class="icon">⚡</span> Alerts
+    </div>
+    <div class="nav-section">Intelligence</div>
+    <div class="nav-item" data-page="iocs">
+      <span class="icon">⊞</span> IOC Database
+    </div>
+    <div class="nav-item" data-page="feeds">
+      <span class="icon">⟳</span> Threat Feeds
+    </div>
+    <div class="nav-item" data-page="history">
+      <span class="icon">≡</span> Lookup History
+    </div>
+  </nav>
+  <div class="sidebar-footer">v1.0 · Flask + SQLite</div>
+</aside>
+
+<!-- ── Main ─────────────────────────────────────────────────── -->
+<div class="main">
+  <div class="topbar">
+    <span class="topbar-title" id="topbar-title">Dashboard</span>
+    <div class="topbar-right">
+      <span class="badge" id="topbar-status">● Online</span>
+      <span class="badge red hidden" id="topbar-alerts-badge">0 Alerts</span>
+    </div>
+  </div>
+
+  <!-- ── Dashboard ─────────────────────────────────────── -->
+  <div class="page active" id="page-dashboard">
+    <div class="page-title">Overview</div>
+    <div class="page-sub">Real-time threat intelligence summary</div>
+
+    <div class="stat-grid" id="stat-cards">
+      <div class="stat-card">
+        <div class="stat-label">Total IOCs</div>
+        <div class="stat-value accent" id="stat-iocs">—</div>
+        <div class="stat-sub">in local database</div>
+      </div>
+      <div class="stat-card green">
+        <div class="stat-label">Total Lookups</div>
+        <div class="stat-value green" id="stat-lookups">—</div>
+        <div class="stat-sub">all time</div>
+      </div>
+      <div class="stat-card red">
+        <div class="stat-label">Open Alerts</div>
+        <div class="stat-value red" id="stat-alerts">—</div>
+        <div class="stat-sub">unresolved</div>
+      </div>
+      <div class="stat-card orange">
+        <div class="stat-label">Critical</div>
+        <div class="stat-value" style="color:var(--orange)" id="stat-critical">—</div>
+        <div class="stat-sub">critical severity</div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">◈ Indicator Types</div>
+        </div>
+        <div class="panel-body">
+          <div class="chart-wrap"><canvas id="chart-types"></canvas></div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">⟳ Lookups Last 7 Days</div>
+        </div>
+        <div class="panel-body">
+          <div class="chart-wrap"><canvas id="chart-lookups"></canvas></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">⚡ Recent Alerts</div>
+        <a class="btn btn-secondary btn-sm" onclick="showPage('alerts')">View all</a>
+      </div>
+      <div class="panel-body" id="dash-alerts-list">
+        <div class="empty">No alerts yet.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Lookup ─────────────────────────────────────────── -->
+  <div class="page" id="page-lookup">
+    <div class="page-title">Indicator Lookup</div>
+    <div class="page-sub">Query VirusTotal, AbuseIPDB and local feeds simultaneously</div>
+
+    <div class="panel lookup-panel">
+      <div class="panel-header"><div class="panel-title">⌕ Search Indicator</div></div>
+      <div class="panel-body">
+        <div class="lookup-row">
+          <input class="lookup-input" id="lookup-input"
+            placeholder="IP address, domain, URL, or file hash…"
+            autocomplete="off" spellcheck="false">
+          <button class="btn btn-primary" id="lookup-btn" onclick="doLookup()">
+            <span id="lookup-btn-label">Analyze</span>
+            <span class="spinner hidden" id="lookup-spinner"></span>
+          </button>
+        </div>
+        <div class="mt-8 text-muted" style="font-size:.72rem;font-family:var(--mono)">
+          Supports: IPv4 · IPv6 · Domain · URL · MD5 · SHA1 · SHA256
+        </div>
+      </div>
+    </div>
+
+    <div id="result-area"></div>
+  </div>
+
+  <!-- ── Alerts ─────────────────────────────────────────── -->
+  <div class="page" id="page-alerts">
+    <div class="page-title">Alerts</div>
+    <div class="page-sub">Auto-generated from high-confidence lookups</div>
+    <div id="alerts-container"><div class="empty">Loading…</div></div>
+  </div>
+
+  <!-- ── IOC Database ───────────────────────────────────── -->
+  <div class="page" id="page-iocs">
+    <div class="page-title">IOC Database</div>
+    <div class="page-sub">Indicators of compromise from ingested threat feeds</div>
+    <div class="search-row">
+      <input class="search-input" id="ioc-search" placeholder="Filter by indicator…"
+        oninput="debounceIocSearch()" autocomplete="off">
+      <span class="text-muted monospace" style="font-size:.75rem" id="ioc-count">— records</span>
+    </div>
+    <div class="panel">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Indicator</th>
+              <th>Type</th>
+              <th>Source</th>
+              <th>First Seen</th>
+              <th>Last Seen</th>
+            </tr>
+          </thead>
+          <tbody id="ioc-tbody"><tr><td colspan="5" class="empty">Loading…</td></tr></tbody>
+        </table>
+      </div>
+      <div class="panel-body" style="padding:12px 20px;border-top:1px solid var(--border)">
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn btn-secondary btn-sm" onclick="loadIocs(currentIocPage-1)" id="ioc-prev">← Prev</button>
+          <span class="text-muted monospace" style="font-size:.75rem" id="ioc-page-label">Page 1</span>
+          <button class="btn btn-secondary btn-sm" onclick="loadIocs(currentIocPage+1)" id="ioc-next">Next →</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Feeds ──────────────────────────────────────────── -->
+  <div class="page" id="page-feeds">
+    <div class="page-title">Threat Feeds</div>
+    <div class="page-sub">Open-source CTI feeds — refresh to ingest latest indicators</div>
+    <div class="panel mb-12">
+      <div class="panel-header">
+        <div class="panel-title">⟳ Feed Management</div>
+        <button class="btn btn-primary btn-sm" onclick="refreshFeeds()" id="refresh-btn">
+          Refresh All Feeds
+        </button>
+      </div>
+      <div class="panel-body">
+        <div id="feed-status" class="text-muted monospace" style="font-size:.8rem">
+          Click "Refresh All Feeds" to pull the latest indicators from open threat feeds.
+        </div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-header"><div class="panel-title">Feed Statistics</div></div>
+      <div class="panel-body">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Feed Name</th><th>Indicator Count</th></tr></thead>
+            <tbody id="feed-stats-tbody"><tr><td colspan="2" class="empty">No data yet.</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── History ────────────────────────────────────────── -->
+  <div class="page" id="page-history">
+    <div class="page-title">Lookup History</div>
+    <div class="page-sub">All past indicator queries across all sources</div>
+    <div class="panel">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Indicator</th>
+              <th>Type</th>
+              <th>Source</th>
+              <th>Queried At</th>
+            </tr>
+          </thead>
+          <tbody id="history-tbody"><tr><td colspan="4" class="empty">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /.main -->
+</div><!-- /.wrapper -->
+
+<div id="toast-container"></div>
+
+<script>
+/* ── Navigation ──────────────────────────────────────────────── */
+const PAGE_TITLES = {
+  dashboard: 'Dashboard', lookup: 'Indicator Lookup',
+  alerts: 'Alerts', iocs: 'IOC Database',
+  feeds: 'Threat Feeds', history: 'Lookup History',
+};
+
+function showPage(id) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('page-' + id).classList.add('active');
+  document.querySelector(`[data-page="${id}"]`).classList.add('active');
+  document.getElementById('topbar-title').textContent = PAGE_TITLES[id];
+  if (id === 'dashboard') loadDashboard();
+  if (id === 'alerts')    loadAlerts();
+  if (id === 'iocs')      loadIocs(1);
+  if (id === 'feeds')     loadFeedStats();
+  if (id === 'history')   loadHistory();
+}
+document.querySelectorAll('.nav-item').forEach(el => {
+  el.addEventListener('click', () => showPage(el.dataset.page));
+});
+
+/* ── Toast ───────────────────────────────────────────────────── */
+function toast(msg, type = 'info') {
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.innerHTML = `<span>${type === 'success' ? '✓' : type === 'error' ? '✗' : 'ℹ'}</span> ${msg}`;
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(() => el.remove(), 3500);
+}
+
+/* ── Dashboard ───────────────────────────────────────────────── */
+let chartTypes, chartLookups;
+
+async function loadDashboard() {
+  const data = await fetch('/api/stats').then(r => r.json());
+
+  document.getElementById('stat-iocs').textContent     = data.total_iocs.toLocaleString();
+  document.getElementById('stat-lookups').textContent  = data.total_lookups.toLocaleString();
+  document.getElementById('stat-alerts').textContent   = data.open_alerts;
+  document.getElementById('stat-critical').textContent = data.critical_alerts;
+
+  if (data.open_alerts > 0) {
+    const b = document.getElementById('topbar-alerts-badge');
+    b.textContent = `${data.open_alerts} Alert${data.open_alerts>1?'s':''}`;
+    b.classList.remove('hidden');
+  }
+
+  // Donut chart – types
+  const typesCtx = document.getElementById('chart-types').getContext('2d');
+  const typeLabels = Object.keys(data.type_breakdown);
+  const typeData   = Object.values(data.type_breakdown);
+  if (chartTypes) chartTypes.destroy();
+  chartTypes = new Chart(typesCtx, {
+    type: 'doughnut',
+    data: {
+      labels: typeLabels,
+      datasets: [{ data: typeData,
+        backgroundColor: ['#00d4ff','#00ff88','#ff3b5c','#ffd600','#ff7a00'],
+        borderWidth: 0, hoverOffset: 6 }],
+    },
+    options: {
+      plugins: { legend: { labels: { color: '#94a3b8', font: { family: 'monospace', size: 11 } } } },
+      cutout: '65%',
+    },
+  });
+
+  // Bar chart – daily lookups
+  const lookupsCtx = document.getElementById('chart-lookups').getContext('2d');
+  const days  = Object.keys(data.daily_lookups);
+  const counts= Object.values(data.daily_lookups);
+  if (chartLookups) chartLookups.destroy();
+  chartLookups = new Chart(lookupsCtx, {
+    type: 'bar',
+    data: {
+      labels: days,
+      datasets: [{
+        label: 'Lookups',
+        data: counts,
+        backgroundColor: 'rgba(0,212,255,.25)',
+        borderColor: '#00d4ff',
+        borderWidth: 1,
+        borderRadius: 4,
+      }],
+    },
+    options: {
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: '#64748b', font: { family: 'monospace', size: 10 } }, grid: { color: '#1f2d45' } },
+        y: { ticks: { color: '#64748b', font: { family: 'monospace', size: 10 } }, grid: { color: '#1f2d45' }, beginAtZero: true },
+      },
+    },
+  });
+
+  // Recent alerts preview
+  const alerts = await fetch('/api/alerts').then(r => r.json());
+  const container = document.getElementById('dash-alerts-list');
+  const recent = alerts.filter(a => !a.resolved).slice(0, 4);
+  if (!recent.length) { container.innerHTML = '<div class="empty">No active alerts.</div>'; return; }
+  container.innerHTML = recent.map(a => alertHTML(a)).join('');
+}
+
+/* ── Alerts ──────────────────────────────────────────────────── */
+function alertHTML(a) {
+  const icon = a.severity === 'critical' ? '🔴' : '🟠';
+  return `<div class="alert-item ${a.severity} ${a.resolved ? 'resolved' : ''}">
+    <span class="alert-icon">${icon}</span>
+    <div class="alert-body">
+      <div class="alert-title"><span class="pill pill-${a.severity}">${a.severity}</span> ${a.indicator}</div>
+      <div class="alert-meta">${a.message} · ${a.created_at}</div>
+    </div>
+    ${!a.resolved ? `<button class="btn btn-secondary btn-sm" onclick="resolveAlert(${a.id})">Resolve</button>` : '<span class="tag">Resolved</span>'}
+  </div>`;
+}
+
+async function loadAlerts() {
+  const alerts = await fetch('/api/alerts').then(r => r.json());
+  const container = document.getElementById('alerts-container');
+  if (!alerts.length) { container.innerHTML = '<div class="empty">No alerts generated yet.</div>'; return; }
+  container.innerHTML = alerts.map(alertHTML).join('');
+}
+
+async function resolveAlert(id) {
+  await fetch(`/api/alerts/${id}/resolve`, { method: 'POST' });
+  toast('Alert resolved', 'success');
+  loadAlerts();
+  loadDashboard();
+}
+
+/* ── Indicator Lookup ────────────────────────────────────────── */
+document.getElementById('lookup-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') doLookup();
+});
+
+async function doLookup() {
+  const indicator = document.getElementById('lookup-input').value.trim();
+  if (!indicator) return;
+
+  const btn     = document.getElementById('lookup-btn');
+  const label   = document.getElementById('lookup-btn-label');
+  const spinner = document.getElementById('lookup-spinner');
+  btn.disabled = true;
+  label.textContent = 'Analyzing…';
+  spinner.classList.remove('hidden');
+  document.getElementById('result-area').innerHTML = '';
+
+  try {
+    const data = await fetch('/api/lookup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ indicator }),
+    }).then(r => r.json());
+
+    renderResults(data);
+  } catch (e) {
+    toast('Lookup failed: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    label.textContent = 'Analyze';
+    spinner.classList.add('hidden');
+  }
+}
+
+function renderResults(data) {
+  const area = document.getElementById('result-area');
+  let html = `<div class="panel mb-12">
+    <div class="panel-header">
+      <div class="panel-title">Results for <span class="text-accent monospace">${esc(data.indicator)}</span></div>
+      <span class="pill pill-${data.type}">${data.type}</span>
+    </div>
+    <div class="panel-body">`;
+
+  // VirusTotal
+  const vt = data.sources.virustotal;
+  if (vt && !vt.error) {
+    const total = (vt.malicious||0)+(vt.suspicious||0)+(vt.harmless||0)+(vt.undetected||0);
+    const pct = n => total ? Math.round(n/total*100) : 0;
+    html += `<div class="mb-12"><div style="font-size:.75rem;font-family:var(--mono);color:var(--text-muted);margin-bottom:10px;text-transform:uppercase;letter-spacing:.08em;">VirusTotal</div>
+    <div style="display:flex;align-items:flex-start;gap:20px;flex-wrap:wrap;">
+      <div>
+        <div class="threat-bar-wrap"><div class="threat-bar-label">Malicious</div><div class="threat-bar-track"><div class="threat-bar-fill bar-red" style="width:${pct(vt.malicious)}%"></div></div><div class="threat-bar-count text-red">${vt.malicious}</div></div>
+        <div class="threat-bar-wrap"><div class="threat-bar-label">Suspicious</div><div class="threat-bar-track"><div class="threat-bar-fill bar-orange" style="width:${pct(vt.suspicious)}%"></div></div><div class="threat-bar-count text-yellow">${vt.suspicious}</div></div>
+        <div class="threat-bar-wrap"><div class="threat-bar-label">Harmless</div><div class="threat-bar-track"><div class="threat-bar-fill bar-green" style="width:${pct(vt.harmless)}%"></div></div><div class="threat-bar-count text-green">${vt.harmless}</div></div>
+        <div class="threat-bar-wrap"><div class="threat-bar-label">Undetected</div><div class="threat-bar-track"><div class="threat-bar-fill bar-gray" style="width:${pct(vt.undetected)}%"></div></div><div class="threat-bar-count text-muted">${vt.undetected}</div></div>
+      </div>
+      <div class="kv-grid" style="flex:1">
+        ${vtMeta(vt)}
+      </div>
+    </div></div>`;
+  } else if (vt && vt.error) {
+    html += `<div class="mb-12"><div class="tag">VirusTotal</div> <span class="text-muted monospace" style="font-size:.78rem">${esc(vt.error)}</span></div>`;
+  }
+
+  // AbuseIPDB
+  const ab = data.sources.abuseipdb;
+  if (ab && !ab.error) {
+    const score = ab.abuse_score || 0;
+    const scoreClass = score >= 80 ? 'score-high' : score >= 40 ? 'score-medium' : 'score-low';
+    html += `<div class="mb-12"><div style="font-size:.75rem;font-family:var(--mono);color:var(--text-muted);margin-bottom:10px;text-transform:uppercase;letter-spacing:.08em;">AbuseIPDB</div>
+    <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;">
+      <div class="score-ring ${scoreClass}">${score}</div>
+      <div class="kv-grid" style="flex:1">
+        <div class="kv"><div class="kv-label">ISP</div><div class="kv-value">${esc(ab.isp||'N/A')}</div></div>
+        <div class="kv"><div class="kv-label">Country</div><div class="kv-value">${esc(ab.country||'N/A')}</div></div>
+        <div class="kv"><div class="kv-label">Total Reports</div><div class="kv-value ${ab.total_reports>0?'text-red':''}">${ab.total_reports}</div></div>
+        <div class="kv"><div class="kv-label">Last Reported</div><div class="kv-value">${esc(ab.last_reported||'Never')}</div></div>
+        <div class="kv"><div class="kv-label">Usage Type</div><div class="kv-value">${esc(ab.usage_type||'N/A')}</div></div>
+        <div class="kv"><div class="kv-label">Tor Exit Node</div><div class="kv-value ${ab.is_tor?'text-red':''}">${ab.is_tor ? 'Yes ⚠' : 'No'}</div></div>
+      </div>
+    </div></div>`;
+  } else if (ab && ab.error) {
+    html += `<div class="mb-12"><div class="tag">AbuseIPDB</div> <span class="text-muted monospace" style="font-size:.78rem">${esc(ab.error)}</span></div>`;
+  }
+
+  // Local feeds
+  const feeds = data.sources.local_feeds || [];
+  html += `<div><div style="font-size:.75rem;font-family:var(--mono);color:var(--text-muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.08em;">Local Feed Hits</div>`;
+  if (feeds.length) {
+    html += `<div class="table-wrap"><table><thead><tr><th>Indicator</th><th>Source</th><th>Last Seen</th></tr></thead><tbody>`;
+    feeds.forEach(f => {
+      html += `<tr><td>${esc(f.indicator)}</td><td>${esc(f.source)}</td><td>${esc(f.last_seen||'—')}</td></tr>`;
+    });
+    html += `</tbody></table></div>`;
+  } else {
+    html += `<span class="text-green monospace" style="font-size:.8rem">✓ Not found in local feeds</span>`;
+  }
+  html += `</div>`;
+
+  html += `</div></div>`;
+  document.getElementById('result-area').innerHTML = html;
+}
+
+function vtMeta(vt) {
+  const fields = [];
+  if (vt.country)   fields.push(['Country',   vt.country]);
+  if (vt.asn)       fields.push(['ASN',        vt.asn]);
+  if (vt.as_owner)  fields.push(['AS Owner',   vt.as_owner]);
+  if (vt.registrar) fields.push(['Registrar',  vt.registrar]);
+  if (vt.name)      fields.push(['File Name',  vt.name]);
+  if (vt.type_desc) fields.push(['Type',       vt.type_desc]);
+  if (vt.size)      fields.push(['Size',       vt.size + ' bytes']);
+  fields.push(['Reputation', vt.reputation ?? 'N/A']);
+  return fields.map(([l,v]) => `<div class="kv"><div class="kv-label">${esc(l)}</div><div class="kv-value">${esc(String(v))}</div></div>`).join('');
+}
+
+/* ── IOC Database ────────────────────────────────────────────── */
+let currentIocPage = 1;
+let iocSearchTimer;
+
+function debounceIocSearch() {
+  clearTimeout(iocSearchTimer);
+  iocSearchTimer = setTimeout(() => loadIocs(1), 350);
+}
+
+async function loadIocs(page = 1) {
+  if (page < 1) return;
+  currentIocPage = page;
+  const q = document.getElementById('ioc-search').value.trim();
+  const params = new URLSearchParams({ page, per: 50, q });
+  const data = await fetch('/api/iocs?' + params).then(r => r.json());
+
+  document.getElementById('ioc-count').textContent = `${data.total.toLocaleString()} records`;
+  document.getElementById('ioc-page-label').textContent = `Page ${page}`;
+  document.getElementById('ioc-prev').disabled = page <= 1;
+  document.getElementById('ioc-next').disabled = (page * 50) >= data.total;
+
+  const tbody = document.getElementById('ioc-tbody');
+  if (!data.iocs.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty">No IOCs found.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = data.iocs.map(ioc => `<tr>
+    <td style="max-width:280px;overflow:hidden;text-overflow:ellipsis">${esc(ioc.indicator)}</td>
+    <td><span class="pill pill-${ioc.type}">${ioc.type}</span></td>
+    <td>${esc(ioc.source||'—')}</td>
+    <td>${esc((ioc.first_seen||'—').split('T')[0])}</td>
+    <td>${esc((ioc.last_seen||'—').split('T')[0])}</td>
+  </tr>`).join('');
+}
+
+/* ── Threat Feeds ────────────────────────────────────────────── */
+async function loadFeedStats() {
+  const stats = await fetch('/api/feeds/stats').then(r => r.json());
+  const tbody = document.getElementById('feed-stats-tbody');
+  const entries = Object.entries(stats);
+  if (!entries.length) { tbody.innerHTML = '<tr><td colspan="2" class="empty">No feeds ingested yet.</td></tr>'; return; }
+  tbody.innerHTML = entries.map(([name, cnt]) =>
+    `<tr><td>${esc(name)}</td><td class="text-accent monospace">${cnt.toLocaleString()}</td></tr>`
+  ).join('');
+}
+
+async function refreshFeeds() {
+  const btn = document.getElementById('refresh-btn');
+  btn.disabled = true;
+  btn.textContent = 'Refreshing…';
+  document.getElementById('feed-status').textContent = 'Downloading feeds — this may take 30–60 seconds…';
+  try {
+    const data = await fetch('/api/feeds/refresh', { method: 'POST' }).then(r => r.json());
+    const lines = Object.entries(data.summary)
+      .map(([feed, cnt]) => `${feed}: ${cnt.toLocaleString()} indicators`).join('\n');
+    document.getElementById('feed-status').textContent = 'Last refresh:\n' + lines;
+    toast('Feeds refreshed successfully', 'success');
+    loadFeedStats();
+  } catch (e) {
+    toast('Feed refresh failed: ' + e.message, 'error');
+    document.getElementById('feed-status').textContent = 'Refresh failed. Check network.';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Refresh All Feeds';
+  }
+}
+
+/* ── History ─────────────────────────────────────────────────── */
+async function loadHistory() {
+  const rows = await fetch('/api/history?limit=50').then(r => r.json());
+  const tbody = document.getElementById('history-tbody');
+  if (!rows.length) { tbody.innerHTML = '<tr><td colspan="4" class="empty">No lookups yet.</td></tr>'; return; }
+  tbody.innerHTML = rows.map(r => `<tr>
+    <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis">${esc(r.indicator)}</td>
+    <td><span class="pill pill-${r.type}">${r.type}</span></td>
+    <td>${esc(r.source)}</td>
+    <td>${esc(r.queried_at)}</td>
+  </tr>`).join('');
+}
+
+/* ── Utility ─────────────────────────────────────────────────── */
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+/* ── Boot ────────────────────────────────────────────────────── */
+loadDashboard();
+</script>
+</body>
+</html>
